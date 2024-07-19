@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download Imagens com Canvas</title>
+</head>
+<body>
+    <label for="manga-name">Nome do Manga</label>
+    <input type="text" id="manga-name">
+    <label for="manga-chapter">Número do Capítulo</label>
+    <input type="number" id="manga-chapter">
+    <button id="downloadBtn">Baixar Imagens</button>
+
+    <script>
+        const inputName = document.querySelector('#manga-name');
+        const inputChapter = document.querySelector('#manga-chapter');
+        let mangaName = 'unnamed';
+        let mangaChapter = 'unknown';
+        inputName.addEventListener('change', (e) => {
+            mangaName = e.target.value;
+        });
+        inputChapter.addEventListener('change', (e) => {
+            mangaChapter = e.target.value;
+        });
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const scaleFactor = window.devicePixelRatio; // Obtém o fator de escala do dispositivo
+        const canvasMaxHeight = 30000;
+        let page = 0;
+
+        // Ajusta a resolução do canvas conforme o fator de escala
+        function setCanvasResolution(width, height) {
+            canvas.width = width * scaleFactor;
+            canvas.height = height * scaleFactor;
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            ctx.scale(scaleFactor, scaleFactor);
+        }
+
+        // Função para desenhar e salvar o canvas
+        function drawAndSaveCanvas(images) {
+            if (images.length === 0) return;
+            
+            let maxWidth = 0;
+            let totalHeight = 0;
+
+            images.forEach(img => {
+                if (img.width > maxWidth) {
+                    maxWidth = img.width;
+                }
+                totalHeight += img.height;
+            });
+
+            setCanvasResolution(maxWidth, totalHeight);
+
+            let currentHeight = 0;
+
+            // Desenha cada imagem no canvas
+            images.forEach(img => {
+                ctx.drawImage(img, 0, currentHeight, img.width, img.height);
+                currentHeight += img.height;
+            });
+
+            // Salva o canvas como uma imagem JPEG com qualidade reduzida
+            const finalImage = canvas.toDataURL('image/jpeg', 0.7); // Ajuste o valor de 0.7 para a qualidade desejada
+            const link = document.createElement('a');
+            link.href = finalImage;
+            link.download = `${mangaName}_${mangaChapter}_${page}.jpg`; // Usar JPEG para compactação
+            link.click();
+            page++;
+        }
+
+        const filePath = './data.json';
+        fetch(filePath)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Erro ao carregar o JSON');
+                }
+                return response.json();
+            })
+            .then(jsonData => {
+                console.log('JSON carregado com sucesso');
+                const imageUrls = JSON.parse(jsonData);
+                document.getElementById('downloadBtn').addEventListener('click', async () => {
+                    const imageBlobs = await Promise.all(imageUrls.slice(1).map(async (imageUrl) => {
+                        try {
+                            const response = await fetch(`http://localhost:3000/proxy?url=${encodeURIComponent(imageUrl)}`);
+                            const blob = await response.blob();
+                            return URL.createObjectURL(blob);
+                        } catch (error) {
+                            console.error('Erro ao fazer fetch da imagem:', error);
+                        }
+                    }));
+
+                    const images = await Promise.all(imageBlobs.map(async (blobUrl) => {
+                        return new Promise((resolve) => {
+                            const img = new Image();
+                            img.onload = () => {
+                                URL.revokeObjectURL(blobUrl); // Libere a URL do Blob
+                                resolve(img);
+                            };
+                            img.src = blobUrl;
+                        });
+                    }));
+
+                    let imagesToDraw = [];
+                    let currentHeight = 0;
+
+                    images.forEach(img => {
+                        if (currentHeight + img.height > canvasMaxHeight) {
+                            // Se adicionar a imagem ultrapassa a altura máxima, desenha e salva o canvas atual
+                            drawAndSaveCanvas(imagesToDraw);
+                            imagesToDraw = [img];
+                            currentHeight = img.height;
+                        } else {
+                            // Adiciona a imagem ao canvas atual
+                            imagesToDraw.push(img);
+                            currentHeight += img.height;
+                        }
+                    });
+
+                    // Desenha e salva o último canvas se houver imagens restantes
+                    if (imagesToDraw.length > 0) {
+                        drawAndSaveCanvas(imagesToDraw);
+                    }
+
+                    // Limpa o contador de páginas após o último download
+                    page = 0;
+                });
+            })
+            .catch(error => {
+                console.error('Erro ao carregar o JSON:', error);
+            });
+    </script>
+</body>
+</html>
